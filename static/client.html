@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>ws demo</title>
+    <script src="https://code.jquery.com/jquery-3.4.1.min.js"></script>
+
+    <script>
+        $(function () {
+            // for test
+            document.cookie = "teset=123";
+            document.cookie = "ci_session={{token}}";
+            document.cookie = "tesetasd=asd123";
+            document.cookie = "tsesetasd=asd123";
+
+            let audio = {
+                play: function (audio, timeout) {
+                    audio.loop = true;
+                    audio.play();
+                    if (typeof (timeout) != undefined && timeout > 0) {
+                        // ringing stops after n msec
+                        setTimeout(function () {
+                            stopAudio(audio);
+                        }, timeout);
+                    }
+                },
+                stop: function (audio) {
+                    audio.pause();
+                    audio.currentTime = 0;
+                },
+                pause: function (audio) {
+                    audio.pause();
+                }
+            }
+
+            let ws;
+            let need_to_reconnect = true;
+
+            let ws_events_handler = {
+                listeners: {
+                    auth: function (data) {
+                        // if can`t authorise
+                        if (!data.value)
+                            need_to_reconnect = false;
+                        $('#need_to_reconnect > strong').text(need_to_reconnect);
+                    },
+                    selections: function (data) {
+                        $('#selections > strong').text(data);
+                    },
+                    online_users: function (data) {
+                        $('#online_users > strong').text(data);
+                    },
+                    notifications: function (data) {
+                        $('#notifications > strong').text(data);
+                    },
+                    balance: function (data) {
+                        $('#balance > strong').text(data);
+                    },
+                    auth_data: function (data) {
+                        $('#auth_data > strong').text(data);
+                    },
+                    incoming_call_begin: function (data) {
+                        $('#incoming_call_answered > strong').text('');
+                        $('#incoming_call > strong').text(data.info);
+                        $('#incoming_call_uid > strong').text(data.call_uid);
+                        audio.play(document.getElementById("ringing_audio"), 30000);
+                    },
+                    incoming_call_cancel: function (data) {
+                        $('#incoming_call_answered > strong').text('');
+                        $('#incoming_call > strong').text(data.info);
+                        $('#incoming_call_uid > strong').text(data.call_uid);
+                        audio.stop(document.getElementById("ringing_audio"));
+                    },
+                    incoming_call_answered: function (data) {
+                        $('#incoming_call_answered > strong').text(data);
+                        $('#incoming_call > strong').text('nobody calling');
+                        $('#incoming_call_uid > strong').text('');
+                        audio.stop(document.getElementById("ringing_audio"));
+                    }
+                },
+                senders: {
+                    incoming_call_answered: function () {
+                        ws_send(ws, JSON.stringify({
+                            action: 'incoming_call_answered',
+                            data: {call_uid: $('#incoming_call_uid > strong').text()}
+                        }));
+                    },
+                    destroy_session: function () {
+                        need_to_reconnect = false;
+                        ws_send(ws, JSON.stringify({action: 'destroy_session'}));
+                        audio.stop(document.getElementById("ringing_audio"));
+                    }
+                }
+            }
+
+            function ws_connect() {
+                ws = new WebSocket("ws://127.0.0.1:6789/");
+                let ws_reconnect_timeout = 1000;
+
+                ws.onerror = function (err) {
+                    console.error(err)
+                }
+
+                ws.onclose = function (e) {
+                    if (need_to_reconnect) {
+                        console.log('socket closed try again');
+                        setTimeout(function () {
+                            ws_connect();
+                        }, ws_reconnect_timeout);
+                    } else {
+                        console.log('socket closed with need_to_reconnect = false');
+                    }
+                }
+
+                ws.onopen = function () {
+                    console.log('socket open');
+                }
+
+                ws.onmessage = function (event) {
+                    data = JSON.parse(event.data);
+                    console.log(data.type);
+                    switch (data.type) {
+                        case 'auth':
+                            ws_events_handler.listeners.auth(data.data);
+                            break;
+                        case 'selections':
+                            ws_events_handler.listeners.selections(data.data);
+                            break;
+                        case 'online_users':
+                            ws_events_handler.listeners.online_users(data.data);
+                            break;
+                        case 'notifications':
+                            ws_events_handler.listeners.notifications(data.data);
+                            break;
+                        case 'balance':
+                            ws_events_handler.listeners.balance(data.data);
+                            break;
+                        case 'state':
+                            break;
+                        case 'auth_data':
+                            ws_events_handler.listeners.auth_data(data.data);
+                            break;
+                        case 'incoming_call_begin':
+                            ws_events_handler.listeners.incoming_call_begin(data.data);
+                            break;
+                        case 'incoming_call_cancel':
+                            ws_events_handler.listeners.incoming_call_cancel(data.data);
+                            break;
+                        case 'incoming_call_answered':
+                            ws_events_handler.listeners.incoming_call_answered(data.data);
+                            break;
+                        default:
+                            console.log(data);
+                            console.error("unsupported event", data);
+                    }
+                };
+            }
+
+            function ws_send(ws, message) {
+                if (ws.readyState === ws.OPEN) {
+                    ws.send(message);
+                    console.log('ws sended');
+                } else {
+                    console.error("send error");
+                }
+            }
+
+            ws_connect();
+
+            // buttons
+            $('#answer_call').click(function (e) {
+                e.preventDefault();
+                ws_events_handler.senders.incoming_call_answered();
+            });
+
+            $('#destroy_session').click(function (e) {
+                e.preventDefault();
+                ws_events_handler.senders.destroy_session();
+            });
+
+            $('#ringing_start').click(function (e) {
+                e.preventDefault();
+                audio.play(document.getElementById("ringing_audio"), 30000);
+            });
+
+            $('#ringing_stop').click(function (e) {
+                e.preventDefault();
+                audio.stop(document.getElementById("ringing_audio"));
+            });
+
+
+            // send msg to server sample
+            // ws_send(ws, JSON.stringify({action: 'gg'}))
+        });
+    </script>
+</head>
+<body>
+
+<div>
+    <div id="need_to_reconnect">need_to_reconnect: <strong>true</strong></div>
+    <div id="auth_data">auth_data: <strong></strong></div>
+    <div id="online_users">online: <strong></strong></div>
+    <div id="notifications">notifications: <strong></strong></div>
+    <div id="selections">selections: <strong></strong></div>
+    <div id="balance">balance: <strong></strong></div>
+    <br/>
+    <br/>
+    <div>
+        <button id="answer_call">answer!</button>
+    </div>
+    <div id="incoming_call">incoming_call: <strong>nobody calling</strong></div>
+    <div id="incoming_call_uid">incoming_call_uid: <strong></strong></div>
+    <div id="incoming_call_answered">incoming_call_answered: <strong></strong></div>
+    <br/>
+    <br/>
+    <div>
+        <button id="destroy_session">destroy_session!</button>
+    </div>
+
+    <audio id="ringing_audio">
+        <source src="file:///D:/Projects/py-websockets/static/sounds/ringing.ogg" type="audio/ogg">
+        <source src="file:///D:/Projects/py-websockets/static/sounds/ringing.mp3" type="audio/mpeg">
+        Your browser does not support the audio element.
+    </audio>
+    <button id="ringing_start" type="button">Play Audio</button>
+    <button id="ringing_stop" type="button">Stop Audio</button>
+</div>
+
+</body>
+</html>
